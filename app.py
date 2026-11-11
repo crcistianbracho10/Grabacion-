@@ -9,6 +9,7 @@ PRIMARY_STREAM = "http://181.79.87.132:8000/play/a001/index.m3u8"
 BACKUP_STREAM = "http://181.78.8.199:8000/play/a07l/index.m3u8"
 
 RECORDINGS_DIR = "./temp_recordings"
+LOG_FILE = "./recording_debug.log"
 os.makedirs(RECORDINGS_DIR, exist_ok=True)
 
 # Control de estado en Streamlit
@@ -17,12 +18,26 @@ if "is_recording" not in st.session_state:
 if "current_process" not in st.session_state:
     st.session_state.current_process = None
 
+def write_log(message):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_entry = f"[{timestamp}] {message}\n"
+    print(log_entry, end="")
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(log_entry)
+
 def check_stream_working(url):
+    write_log(f"Comprobando disponibilidad del stream: {url}")
     try:
         cmd = ["ffmpeg", "-y", "-timeout", "5000000", "-i", url, "-t", "1", "-f", "null", "-"]
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=8)
-        return res.returncode == 0
-    except Exception:
+        if res.returncode == 0:
+            write_log(f"Stream OK: {url}")
+            return True
+        else:
+            write_log(f"Stream falló (code {res.returncode}): {url}")
+            return False
+    except Exception as e:
+        write_log(f"Excepción al comprobar stream {url}: {str(e)}")
         return False
 
 def start_recording(duracion_minutos):
@@ -30,7 +45,10 @@ def start_recording(duracion_minutos):
         st.warning("⚠️ Ya hay una grabación en curso.")
         return
     
+    write_log("Intentando iniciar nueva grabación...")
     stream_to_use = PRIMARY_STREAM if check_stream_working(PRIMARY_STREAM) else BACKUP_STREAM
+    write_log(f"Stream seleccionado para grabar: {stream_to_use}")
+    
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     output_filepath = os.path.join(RECORDINGS_DIR, f"grabacion_{timestamp}.mp4")
     
@@ -44,11 +62,13 @@ def start_recording(duracion_minutos):
     ]
     
     try:
-        st.session_state.current_process = subprocess.Popen(cmd)
+        # Abrimos el proceso y redirigimos el stderr para capturar los logs de FFmpeg
+        log_output = open(LOG_FILE, "a", encoding="utf-8")
+        st.session_state.current_process = subprocess.Popen(cmd, stdout=log_output, stderr=log_output)
         st.session_state.is_recording = True
+        write_log(f"🔴 Grabación iniciada. Guardando en: {output_filepath} por {duracion_minutos} min.")
         st.success(f"🔴 Grabación iniciada por {duracion_minutos} min.")
         
-        # Hilo para detener automáticamente tras los minutos indicados
         duracion_segundos = duracion_minutos * 60
         def stop_after_timeout():
             time.sleep(duracion_segundos)
@@ -57,16 +77,21 @@ def start_recording(duracion_minutos):
         threading.Thread(target=stop_after_timeout, daemon=True).start()
     except Exception as e:
         st.session_state.is_recording = False
-        st.error(f"⚠️ Error al conectar: {str(e)}")
+        err_msg = f"⚠️ Error crítico al iniciar FFmpeg: {str(e)}"
+        write_log(err_msg)
+        st.error(err_msg)
 
 def stop_recording():
     if not st.session_state.is_recording or st.session_state.current_process is None:
-        st.warning("⚠️ No hay ninguna grabación activa.")
+        write_log("Intento de detener grabación pero no hay ninguna activa.")
         return
     try:
+        write_log("Deteniendo proceso de grabación...")
         st.session_state.current_process.terminate()
         st.session_state.current_process.wait(timeout=5)
-    except Exception:
+        write_log("Proceso detenido correctamente.")
+    except Exception as e:
+        write_log(f"Fuerza bruta al matar proceso FFmpeg: {str(e)}")
         st.session_state.current_process.kill()
     finally:
         st.session_state.current_process = None
@@ -79,11 +104,14 @@ def convert_to_mp3(video_path):
     mp3_path = video_path.rsplit('.', 1)[0] + ".mp3"
     if os.path.exists(mp3_path):
         return mp3_path
+    write_log(f"Convirtiendo a MP3: {video_path}")
     cmd = ["ffmpeg", "-y", "-i", video_path, "-vn", "-acodec", "libmp3lame", "-q:a", "2", mp3_path]
     try:
         subprocess.run(cmd, check=True)
+        write_log("Conversión a MP3 exitosa.")
         return mp3_path
-    except Exception:
+    except Exception as e:
+        write_log(f"Error convirtiendo a MP3: {str(e)}")
         return None
 
 def list_recordings():
@@ -94,8 +122,8 @@ def list_recordings():
 # Interfaz visual de Streamlit
 st.set_page_config(page_title="Grabador Manual Streamlit", page_icon="🔴", layout="wide")
 
-st.title("🔴 Grabador Manual de Streamings")
-st.write("Panel de control rápido y estable para respaldar transmisiones cuando hay servicio eléctrico.")
+st.title("🔴 Grabador Manual de Streamings con Logs")
+st.write("Panel de control con registro interno para verificar errores en tiempo real.")
 
 col1, col2 = st.columns(2)
 
@@ -140,5 +168,20 @@ with col2:
             file_path = os.path.join(RECORDINGS_DIR, f)
             if os.path.isfile(file_path):
                 os.remove(file_path)
+        write_log("Servidor limpiado por completo de grabaciones.")
         st.success("¡Espacio limpiado por completo!")
         st.rerun()
+
+# Visor de Logs en vivo en la interfaz
+st.subheader("📋 Consola de Logs (FFmpeg y Sistema)")
+if st.button("🔄 Refrescar Logs"):
+    st.rerun()
+
+if os.path.exists(LOG_FILE):
+    with open(LOG_FILE, "r", encoding="utf-8") as lf:
+        log_lines = lf.readlines()
+    # Mostrar los últimos 50 logs en orden inverso
+    log_text = "".join(log_lines[-50:])
+    st.text_area("Registro interno", value=log_text, height=250)
+else:
+    st.info("Aún no hay registros de log generados.")

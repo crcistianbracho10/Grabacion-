@@ -5,6 +5,7 @@ import threading
 import time
 import schedule
 import streamlit as st
+from huggingface_hub import HfApi
 
 PRIMARY_STREAM = "http://181.79.87.132:8000/play/a001/index.m3u8"
 BACKUP_STREAM = "http://181.78.8.199:8000/play/a07l/index.m3u8"
@@ -20,6 +21,8 @@ if "current_process" not in st.session_state:
     st.session_state.current_process = None
 if "scheduler_started" not in st.session_state:
     st.session_state.scheduler_started = False
+if "last_recorded_file" not in st.session_state:
+    st.session_state.last_recorded_file = None
 
 def write_log(message):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -38,6 +41,26 @@ def check_stream_working(url):
         write_log(f"Excepción al comprobar stream {url}: {str(e)}")
         return False
 
+def subir_a_hf_dataset(file_path):
+    try:
+        if "HF_TOKEN" not in st.secrets:
+            write_log("⚠️ No se encontró HF_TOKEN en st.secrets. No se pudo subir a Hugging Face.")
+            return
+        
+        token = st.secrets["HF_TOKEN"]
+        api = HfApi(token=token)
+        
+        write_log(f"Subiendo {os.path.basename(file_path)} al dataset cristianbracho904/Grabacionjd...")
+        api.upload_file(
+            path_or_fileobj=file_path,
+            path_in_repo=os.path.basename(file_path),
+            repo_id="cristianbracho904/Grabacionjd",
+            repo_type="dataset"
+        )
+        write_log("✅ ¡Archivo respaldado exitosamente en Hugging Face Dataset!")
+    except Exception as e:
+        write_log(f"❌ Error subiendo a Hugging Face Dataset: {str(e)}")
+
 def ejecutar_grabacion(duracion_minutos, origen="Manual"):
     if st.session_state.is_recording:
         write_log(f"[{origen}] Intento de grabar pero ya hay una grabación en curso.")
@@ -49,6 +72,7 @@ def ejecutar_grabacion(duracion_minutos, origen="Manual"):
     
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     output_filepath = os.path.join(RECORDINGS_DIR, f"grabacion_{timestamp}.mp4")
+    st.session_state.last_recorded_file = output_filepath
     
     cmd = [
         "ffmpeg", "-y",
@@ -90,11 +114,14 @@ def stop_recording(origen="Manual"):
     finally:
         st.session_state.current_process = None
         st.session_state.is_recording = False
-    write_log("⏹️ Grabación detenida y guardada.")
+        write_log("⏹️ Grabación detenida y guardada localmente.")
+        
+        # Subir automáticamente a Hugging Face Dataset appena termine
+        if st.session_state.last_recorded_file and os.path.exists(st.session_state.last_recorded_file):
+            subir_a_hf_dataset(st.session_state.last_recorded_file)
 
-# Configurar el planificador de horarios automáticos (Lunes a Viernes)
+# Configurar el planificador automático (Lunes a Viernes)
 def run_scheduler():
-    # Nota: Asegúrate de que el servidor esté en la zona horaria correcta (o UTC ajustada)
     schedule.every().monday.through(schedule.friday).at("11:38").do(ejecutar_grabacion, duracion_minutos=60, origen="Horario 11:38AM")
     schedule.every().monday.through(schedule.friday).at("18:10").do(ejecutar_grabacion, duracion_minutos=60, origen="Horario 6:10PM")
     
@@ -102,7 +129,6 @@ def run_scheduler():
         schedule.run_pending()
         time.sleep(30)
 
-# Iniciar el hilo del planificador una sola vez
 if not st.session_state.scheduler_started:
     threading.Thread(target=run_scheduler, daemon=True).start()
     st.session_state.scheduler_started = True
@@ -129,10 +155,10 @@ def list_recordings():
     return files
 
 # Interfaz visual de Streamlit
-st.set_page_config(page_title="Grabador Automatizado", page_icon="🔴", layout="wide")
+st.set_page_config(page_title="Grabador Automatizado con HF Backup", page_icon="🔴", layout="wide")
 
-st.title("🔴 Grabador Automático y Manual de Streamings")
-st.write("📅 **Horarios programados:** Lunes a Viernes a las **11:38 AM** y respaldo a las **6:10 PM** (duración de 60 min).")
+st.title("🔴 Grabador Automático con Respaldo en Hugging Face")
+st.write("📅 **Horarios activos (Lunes a Viernes):** **11:38 AM** y respaldo a las **6:10 PM** (60 min). Sube automáticamente a `cristianbracho904/Grabacionjd`.")
 
 col1, col2 = st.columns(2)
 
@@ -148,7 +174,7 @@ with col1:
         stop_recording(origen="Manual Web")
         st.rerun()
 
-    estado_actual = "🔴 Grabando en segundo plano..." if st.session_state.is_recording else "🟢 Sistema en espera (Horarios activos)."
+    estado_actual = "🔴 Grabando en segundo plano y respaldando..." if st.session_state.is_recording else "🟢 Sistema en espera (Horarios activos)."
     st.info(f"**Estado:** {estado_actual}")
 
 with col2:
@@ -182,7 +208,7 @@ with col2:
         st.rerun()
 
 # Visor de Logs
-st.subheader("📋 Consola de Logs (Historial de Grabaciones)")
+st.subheader("📋 Consola de Logs (Historial de Grabación y Subida)")
 if st.button("🔄 Refrescar Logs"):
     st.rerun()
 

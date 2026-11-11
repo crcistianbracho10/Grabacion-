@@ -122,8 +122,8 @@ def stop_recording(origen="Manual"):
 
 # Configurar el planificador automático (Lunes a Viernes)
 def run_scheduler():
-    schedule.every().monday.through(schedule.friday).at("11:38").do(ejecutar_grabacion, duracion_minutos=60, origen="Horario 11:38AM")
-    schedule.every().monday.through(schedule.friday).at("18:10").do(ejecutar_grabacion, duracion_minutos=60, origen="Horario 6:10PM")
+    schedule.every().monday.through(schedule.friday).at("06:38").do(ejecutar_grabacion, duracion_minutos=40, origen="Horario 11:38AM")
+    schedule.every().monday.through(schedule.friday).at("18:10").do(ejecutar_grabacion, duracion_minutos=40, origen="Horario 6:10PM")
     
     while True:
         schedule.run_pending()

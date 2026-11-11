@@ -23,6 +23,8 @@ if "scheduler_started" not in st.session_state:
     st.session_state.scheduler_started = False
 if "last_recorded_file" not in st.session_state:
     st.session_state.last_recorded_file = None
+if "recording_end_time" not in st.session_state:
+    st.session_state.recording_end_time = None
 
 def write_log(message):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -87,6 +89,7 @@ def ejecutar_grabacion(duracion_minutos, origen="Manual"):
         log_output = open(LOG_FILE, "a", encoding="utf-8")
         st.session_state.current_process = subprocess.Popen(cmd, stdout=log_output, stderr=log_output)
         st.session_state.is_recording = True
+        st.session_state.recording_end_time = datetime.datetime.now() + datetime.timedelta(minutes=duracion_minutos)
         write_log(f"🔴 Grabación iniciada. Guardando en: {output_filepath}")
         
         duracion_segundos = duracion_minutos * 60
@@ -97,6 +100,7 @@ def ejecutar_grabacion(duracion_minutos, origen="Manual"):
         threading.Thread(target=stop_after_timeout, daemon=True).start()
     except Exception as e:
         st.session_state.is_recording = False
+        st.session_state.recording_end_time = None
         write_log(f"⚠️ Error crítico al iniciar FFmpeg: {str(e)}")
 
 def stop_recording(origen="Manual"):
@@ -114,15 +118,15 @@ def stop_recording(origen="Manual"):
     finally:
         st.session_state.current_process = None
         st.session_state.is_recording = False
+        st.session_state.recording_end_time = None
         write_log("⏹️ Grabación detenida y guardada localmente.")
         
-        # Subir automáticamente a Hugging Face Dataset appena termine
         if st.session_state.last_recorded_file and os.path.exists(st.session_state.last_recorded_file):
             subir_a_hf_dataset(st.session_state.last_recorded_file)
 
-# Configurar el planificador automático (Lunes a Viernes)
+# Configurar el planificador automático (Lunes a Viernes - 40 minutos)
 def run_scheduler():
-    schedule.every().monday.through(schedule.friday).at("06:38").do(ejecutar_grabacion, duracion_minutos=40, origen="Horario 11:38AM")
+    schedule.every().monday.through(schedule.friday).at("11:38").do(ejecutar_grabacion, duracion_minutos=40, origen="Horario 11:38AM")
     schedule.every().monday.through(schedule.friday).at("18:10").do(ejecutar_grabacion, duracion_minutos=40, origen="Horario 6:10PM")
     
     while True:
@@ -132,7 +136,7 @@ def run_scheduler():
 if not st.session_state.scheduler_started:
     threading.Thread(target=run_scheduler, daemon=True).start()
     st.session_state.scheduler_started = True
-    write_log("Planificador automático de horarios iniciado en segundo plano.")
+    write_log("Planificador automático de horarios iniciado (40 min de duración).")
 
 def convert_to_mp3(video_path):
     if not video_path or not os.path.exists(video_path):
@@ -155,16 +159,16 @@ def list_recordings():
     return files
 
 # Interfaz visual de Streamlit
-st.set_page_config(page_title="Grabador Automatizado con HF Backup", page_icon="🔴", layout="wide")
+st.set_page_config(page_title="Grabador Automatizado con Cuenta Regresiva", page_icon="🔴", layout="wide")
 
-st.title("🔴 Grabador Automático con Respaldo en Hugging Face")
-st.write("📅 **Horarios activos (Lunes a Viernes):** **11:38 AM** y respaldo a las **6:10 PM** (60 min). Sube automáticamente a `cristianbracho904/Grabacionjd`.")
+st.title("🔴 Grabador Automático (40 Minutos) + Respaldo HF")
+st.write("📅 **Horarios (Lunes a Viernes):** **11:38 AM** y **6:10 PM** (duración de **40 minutos** cada una).")
 
 col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("Control Manual y Pruebas")
-    duracion = st.slider("Duración de prueba (Minutos):", min_value=1, max_value=180, value=3, step=1)
+    duracion = st.slider("Duración de prueba (Minutos):", min_value=1, max_value=180, value=40, step=1)
     
     if st.button("⚡ Iniciar Grabación de Prueba", type="primary", use_container_width=True):
         ejecutar_grabacion(duracion, origen="Prueba Manual")
@@ -174,8 +178,17 @@ with col1:
         stop_recording(origen="Manual Web")
         st.rerun()
 
-    estado_actual = "🔴 Grabando en segundo plano y respaldando..." if st.session_state.is_recording else "🟢 Sistema en espera (Horarios activos)."
-    st.info(f"**Estado:** {estado_actual}")
+    # Mostrar Estado y Cuenta Regresiva si está grabando
+    if st.session_state.is_recording and st.session_state.recording_end_time:
+        tiempo_restante = st.session_state.recording_end_time - datetime.datetime.now()
+        if tiempo_restante.total_seconds() > 0:
+            min_restantes = int(tiempo_restante.total_seconds() // 60)
+            seg_restantes = int(tiempo_restante.total_seconds() % 60)
+            st.error(f"🔴 **GRABANDO EN CURSO** — Tiempo restante: **{min_restantes:02d}:{seg_restantes:02d}**")
+        else:
+            st.warning("⚠️ Finalizando grabación...")
+    else:
+        st.info("🟢 **Sistema en espera** (Horarios activos a las 11:38 AM y 6:10 PM).")
 
 with col2:
     st.subheader("📁 Descargar a la PC")
@@ -208,7 +221,7 @@ with col2:
         st.rerun()
 
 # Visor de Logs
-st.subheader("📋 Consola de Logs (Historial de Grabación y Subida)")
+st.subheader("📋 Consola de Logs (Historial y Conexión)")
 if st.button("🔄 Refrescar Logs"):
     st.rerun()
 

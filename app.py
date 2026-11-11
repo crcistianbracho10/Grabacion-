@@ -124,10 +124,19 @@ def stop_recording(origen="Manual"):
         if st.session_state.last_recorded_file and os.path.exists(st.session_state.last_recorded_file):
             subir_a_hf_dataset(st.session_state.last_recorded_file)
 
-# Configurar el planificador automático (Lunes a Viernes - 40 minutos)
+# Planificador automático (Lunes a Viernes - 40 minutos corregido sin .through())
 def run_scheduler():
-    schedule.every().monday.through(schedule.friday).at("11:38").do(ejecutar_grabacion, duracion_minutos=40, origen="Horario 11:38AM")
-    schedule.every().monday.through(schedule.friday).at("18:10").do(ejecutar_grabacion, duracion_minutos=40, origen="Horario 6:10PM")
+    dias = [
+        schedule.every().monday,
+        schedule.every().tuesday,
+        schedule.every().wednesday,
+        schedule.every().thursday,
+        schedule.every().friday
+    ]
+    
+    for dia in dias:
+        dia.at("11:38").do(ejecutar_grabacion, duracion_minutos=40, origen="Horario 11:38AM")
+        dia.at("18:10").do(ejecutar_grabacion, duracion_minutos=40, origen="Horario 6:10PM")
     
     while True:
         schedule.run_pending()
@@ -159,10 +168,10 @@ def list_recordings():
     return files
 
 # Interfaz visual de Streamlit
-st.set_page_config(page_title="Grabador Automatizado con Cuenta Regresiva", page_icon="🔴", layout="wide")
+st.set_page_config(page_title="Grabador Automatizado", page_icon="🔴", layout="wide")
 
 st.title("🔴 Grabador Automático (40 Minutos) + Respaldo HF")
-st.write("📅 **Horarios (Lunes a Viernes):** **11:38 AM** y **6:10 PM** (duración de **40 minutos** cada una).")
+st.write("📅 **Horarios (Lunes a Viernes):** **11:38 AM** y **6:10 PM** (duración de **40 minutos** cada una). Respaldo en `cristianbracho904/Grabacionjd`.")
 
 col1, col2 = st.columns(2)
 
